@@ -1,30 +1,77 @@
-name: Build Android APK
-on: [push, workflow_dispatch]
+# 工作流名称：明确标注GPL v3和Android打包
+name: Build Android APK (GPL v3 - 32/64位)
+# 触发方式：手动触发+代码推送触发
+on:
+  push:
+    branches: [ main ]  # 仅main分支推送代码时触发
+  workflow_dispatch:    # 支持网页端手动触发
 
+# 核心打包任务
 jobs:
   build:
+    # 指定运行环境：最新版Ubuntu（兼容Android打包）
     runs-on: ubuntu-latest
+    # 任务步骤
     steps:
-      - uses: actions/checkout@v4
-      
-      - name: Set up JDK 17
+      # 步骤1：拉取仓库代码到CI环境（必须第一步）
+      - name: 拉取仓库代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 拉取完整代码，避免文件缺失
+
+      # 步骤2：配置JDK 17（Android打包必需版本）
+      - name: 配置JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
-          
-      - name: Generate signing key
+          cache: gradle  # 缓存Gradle，加速后续打包
+
+      # 步骤3：生成APK签名文件（使用GitHub Secrets中的密码）
+      - name: 生成签名文件（GPL合规）
         run: |
-          keytool -genkey -v -keystore my-release-key.jks -keyalg RSA -keysize 2048 -validity 10000 -alias my-key-alias \
+          # 用keytool生成jks签名文件，参数全自动化
+          keytool -genkey -v \
+            -keystore my-release-key.jks \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -alias my-key-alias \
             -storepass ${{ secrets.KEY_STORE_PASSWORD }} \
             -keypass ${{ secrets.KEY_PASSWORD }} \
-            -dname "CN=Unknown, OU=Unknown, O=Unknown, L=Unknown, ST=Unknown, C=Unknown"
-      
-      - name: Build APK
-        run: ./gradlew assembleRelease
-        
-      - name: Upload APK
+            -dname "CN=MemoApp, OU=OpenSource, O=User, L=City, ST=Province, C=CN" \
+            -noprompt  # 取消交互式提示，避免CI卡住
+
+      # 步骤4：修复gradlew权限并打包（解决Permission denied问题）
+      - name: 打包32/64位Release版APK
+        run: |
+          # 切换到项目根目录，确保路径正确
+          cd $GITHUB_WORKSPACE
+          # 强制赋予gradlew可执行权限（核心修复）
+          chmod +x ./gradlew || sudo chmod +x ./gradlew
+          # 执行打包命令，输出详细日志便于排错
+          ./gradlew assembleRelease --stacktrace
+        env:
+          # 传递签名相关环境变量
+          KEY_ALIAS: "my-key-alias"
+          KEY_STORE_FILE: "my-release-key.jks"
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+
+      # 步骤5：上传打包产物（含32/64位APK+GPL许可证）
+      - name: 上传APK产物（GPL合规）
         uses: actions/upload-artifact@v4
         with:
-          name: memo-app-apks
-          path: app/build/outputs/apk/release/*.apk
+          name: memo-app-apk-gpl-v3  # 产物名称，标注许可证
+          # 要上传的文件：所有APK+许可证文件
+          path: |
+            app/build/outputs/apk/release/*.apk
+            LICENSE  # 仓库中的GPL许可证文件
+            README.md  # 项目说明文件
+
+      # 步骤6：GPL合规提醒（可选，提示分发要求）
+      - name: GPL v3 分发提醒
+        run: |
+          echo "✅ APK打包完成！可在Artifacts中下载32/64位APK"
+          echo "⚠️ 基于GPL v3许可证，分发APK时需公开仓库完整代码"
+          echo "⚠️ 签名文件my-release-key.jks仅CI使用，请勿公开"
